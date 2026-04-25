@@ -3,6 +3,7 @@ import * as Ink from '@hermes/ink'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { setInputSelection } from '../app/inputSelectionStore.js'
+import type { CompletionItem, StateSetter } from '../app/interfaces.js'
 import { readClipboardText, writeClipboardText } from '../lib/clipboard.js'
 import { isActionMod, isMac, isMacActionFallback } from '../lib/platform.js'
 
@@ -330,7 +331,12 @@ export function TextInput({
   onSubmit,
   mask,
   placeholder = '',
-  focus = true
+  focus = true,
+  // Completion props
+  completions = [],
+  compIdx = 0,
+  compReplace = 0,
+  setCompIdx,
 }: TextInputProps) {
   const [cur, setCur] = useState(value.length)
   const [sel, setSel] = useState<null | { end: number; start: number }>(null)
@@ -630,8 +636,6 @@ export function TextInput({
       if (
         (k.ctrl && inp === 'c') ||
         (k.ctrl && inp === 'b') ||
-        k.tab ||
-        (k.shift && k.tab) ||
         k.pageUp ||
         k.pageDown ||
         k.escape
@@ -649,6 +653,30 @@ export function TextInput({
 
       let c = curRef.current
       let v = vRef.current
+
+      // Tab / Shift+Tab: cycle through completions or accept
+      if (k.tab || (k.shift && k.tab)) {
+        if (completions.length > 0) {
+          if (k.shift) {
+            // Cycle backward
+            setCompIdx?.((prev) => (prev - 1 + completions.length) % completions.length)
+          } else {
+            // Accept current completion
+            const comp = completions[compIdx]
+            if (comp) {
+              const cur = curRef.current
+              const v = vRef.current
+              const start = compReplace
+              const end = cur
+              const newValue = v.slice(0, start) + comp.text + v.slice(end)
+              const newCursor = start + comp.text.length
+              commit(newValue, newCursor)
+            }
+          }
+        }
+        return
+      }
+
       const mod = isActionMod(k)
       const wordMod = mod || k.meta
       const actionHome = k.home || (!isMac && mod && inp === 'a') || isMacActionFallback(k, inp, 'a')
@@ -846,4 +874,9 @@ interface TextInputProps {
   onSubmit?: (v: string) => void
   placeholder?: string
   value: string
+  // Completion props (for TUI message autocompletion)
+  completions?: CompletionItem[]
+  compIdx?: number
+  compReplace?: number
+  setCompIdx?: StateSetter<number>
 }

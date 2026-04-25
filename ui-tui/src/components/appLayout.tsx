@@ -241,6 +241,10 @@ const ComposerPane = memo(function ComposerPane({
                   onSubmit={composer.submit}
                   placeholder={composer.empty ? PLACEHOLDER : ui.busy ? 'Ctrl+C to interrupt…' : ''}
                   value={composer.input}
+                  completions={composer.completions}
+                  compIdx={composer.compIdx}
+                  compReplace={composer.compReplace}
+                  setCompIdx={composer.setCompIdx}
                 />
 
                 <Box position="absolute" right={0}>

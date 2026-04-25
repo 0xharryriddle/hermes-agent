@@ -23,7 +23,7 @@ import type { Msg, PanelSection, SlashCatalog } from '../types.js'
 
 import { createGatewayEventHandler } from './createGatewayEventHandler.js'
 import { createSlashHandler } from './createSlashHandler.js'
-import { type GatewayRpc, type TranscriptRow } from './interfaces.js'
+import { type GatewayRpc, type TranscriptRow, type AppLayoutComposerProps } from './interfaces.js'
 import { $overlayState, patchOverlayState } from './overlayStore.js'
 import { turnController } from './turnController.js'
 import { $turnState, patchTurnState } from './turnStore.js'
@@ -664,23 +664,22 @@ export function useMainApp(gw: GatewayClient) {
     [answerApproval, answerClarify, answerSecret, answerSudo, onModelSelect, session.resumeById]
   )
 
-  const appComposer = useMemo(
-    () => ({
-      cols,
-      compIdx: composerState.compIdx,
-      completions: composerState.completions,
-      empty,
-      handleTextPaste: composerActions.handleTextPaste,
-      input: composerState.input,
-      inputBuf: composerState.inputBuf,
-      pagerPageSize,
-      queueEditIdx: composerState.queueEditIdx,
-      queuedDisplay: composerState.queuedDisplay,
-      submit,
-      updateInput: composerActions.setInput
-    }),
-    [cols, composerActions, composerState, empty, pagerPageSize, submit]
-  )
+  const appComposer = useMemo<AppLayoutComposerProps>(() => ({
+    cols,
+    compIdx: composerState.compIdx,
+    compReplace: composerState.compReplace,
+    completions: composerState.completions,
+    empty,
+    handleTextPaste: composerActions.handleTextPaste,
+    input: composerState.input,
+    inputBuf: composerState.inputBuf,
+    pagerPageSize,
+    queueEditIdx: composerState.queueEditIdx,
+    queuedDisplay: composerState.queuedDisplay,
+    setCompIdx: composerActions.setCompIdx,
+    submit,
+    updateInput: composerActions.setInput
+  }), [cols, composerActions, composerState, empty, pagerPageSize, submit])
 
   const liveTailVisible = (() => {
     const s = scrollRef.current

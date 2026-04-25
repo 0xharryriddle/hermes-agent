@@ -290,6 +290,7 @@ export interface AppLayoutActions {
 export interface AppLayoutComposerProps {
   cols: number
   compIdx: number
+  compReplace: number
   completions: CompletionItem[]
   empty: boolean
   handleTextPaste: (event: PasteEvent) => MaybePromise<ComposerPasteResult | null>
@@ -298,6 +299,7 @@ export interface AppLayoutComposerProps {
   pagerPageSize: number
   queueEditIdx: null | number
   queuedDisplay: string[]
+  setCompIdx: StateSetter<number>
   submit: (value: string) => void
   updateInput: StateSetter<string>
 }
