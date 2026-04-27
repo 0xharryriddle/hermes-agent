@@ -37,6 +37,8 @@ import type {
   SubagentProgress,
   ThinkingMode
 } from '../types.js'
+import { ExpandableToolCall } from './ExpandableToolCall.js'
+import { TreeRow, TreeTextRow, nextTreeRails, treeLead, type TreeBranch, type TreeRails } from './treeRow.js'
 
 const THINK: BrailleSpinnerName[] = ['helix', 'breathe', 'orbit', 'dna', 'waverows', 'snake', 'pulse']
 const TOOL: BrailleSpinnerName[] = ['cascade', 'scan', 'diagswipe', 'fillsweep', 'rain', 'columns', 'sparkle']
@@ -45,81 +47,6 @@ const fmtElapsed = (ms: number) => {
   const sec = Math.max(0, ms) / 1000
 
   return sec < 10 ? `${sec.toFixed(1)}s` : `${Math.round(sec)}s`
-}
-
-type TreeBranch = 'mid' | 'last'
-type TreeRails = readonly boolean[]
-
-const nextTreeRails = (rails: TreeRails, branch: TreeBranch) => [...rails, branch === 'mid']
-
-const treeLead = (rails: TreeRails, branch: TreeBranch) =>
-  `${rails.map(on => (on ? '│ ' : '  ')).join('')}${branch === 'mid' ? '├─ ' : '└─ '}`
-
-// ── Primitives ───────────────────────────────────────────────────────
-
-function TreeRow({
-  branch,
-  children,
-  rails = [],
-  stemColor,
-  stemDim = true,
-  t
-}: {
-  branch: TreeBranch
-  children: ReactNode
-  rails?: TreeRails
-  stemColor?: string
-  stemDim?: boolean
-  t: Theme
-}) {
-  const lead = treeLead(rails, branch)
-
-  return (
-    <Box>
-      <NoSelect flexShrink={0} fromLeftEdge width={lead.length}>
-        <Text color={stemColor ?? t.color.dim} dim={stemDim}>
-          {lead}
-        </Text>
-      </NoSelect>
-      <Box flexDirection="column" flexGrow={1}>
-        {children}
-      </Box>
-    </Box>
-  )
-}
-
-function TreeTextRow({
-  branch,
-  color,
-  content,
-  dimColor,
-  rails = [],
-  t,
-  wrap = 'wrap-trim'
-}: {
-  branch: TreeBranch
-  color: string
-  content: ReactNode
-  dimColor?: boolean
-  rails?: TreeRails
-  t: Theme
-  wrap?: 'truncate-end' | 'wrap' | 'wrap-trim'
-}) {
-  const text = dimColor ? (
-    <Text color={color} dim wrap={wrap}>
-      {content}
-    </Text>
-  ) : (
-    <Text color={color} wrap={wrap}>
-      {content}
-    </Text>
-  )
-
-  return (
-    <TreeRow branch={branch} rails={rails} t={t}>
-      {text}
-    </TreeRow>
-  )
 }
 
 function TreeNode({
@@ -133,7 +60,7 @@ function TreeNode({
   t
 }: {
   branch: TreeBranch
-  children?: (rails: boolean[]) => ReactNode
+  children?: (rails: TreeRails) => ReactNode
   header: ReactNode
   open: boolean
   rails?: TreeRails
@@ -400,7 +327,7 @@ function SubagentAccordion({
     header: ReactNode
     key: string
     open: boolean
-    render: (rails: boolean[]) => ReactNode
+    render: (rails: TreeRails) => ReactNode
   }[] = []
 
   if (hasThinking) {
@@ -680,6 +607,7 @@ interface Group {
   details: DetailRow[]
   key: string
   label: string
+  toolId?: string  // set for tool groups to enable per-tool expansion
 }
 
 export const ToolTrail = memo(function ToolTrail({
@@ -738,6 +666,8 @@ export const ToolTrail = memo(function ToolTrail({
   const [openSubagents, setOpenSubagents] = useState(visible.subagents === 'expanded')
   const [deepSubagents, setDeepSubagents] = useState(visible.subagents === 'expanded')
   const [openMeta, setOpenMeta] = useState(visible.activity === 'expanded')
+  // Per-tool expansion state: Set of tool IDs whose result details are shown
+  const [expandedTools, setExpandedTools] = useState<Set<string>>(new Set())
 
   useEffect(() => {
     if (!tools.length || (visible.tools !== 'expanded' && !openTools)) {
@@ -845,22 +775,42 @@ export const ToolTrail = memo(function ToolTrail({
     meta.push({ color: t.color.dim, content: line, dimColor: true, key: `tr-${i}` })
   }
 
-  for (const tool of tools) {
-    const label = formatToolCall(tool.name, tool.context || '')
+   for (const tool of tools) {
+     const label = formatToolCall(tool.name, tool.context || '')
+     const isExpanded = expandedTools.has(tool.id)
 
-    groups.push({
-      color: t.color.cornsilk,
-      key: tool.id,
-      label,
-      details: [],
-      content: (
-        <>
-          <Spinner color={t.color.amber} variant="tool" /> {label}
-          {tool.startedAt ? ` (${fmtElapsed(now - tool.startedAt)})` : ''}
-        </>
-      )
-    })
-  }
+     // Build details: full tool result (if any)
+     const details: DetailRow[] = []
+     if (tool.result) {
+       details.push({
+         color: tool.error ? t.color.error : t.color.dim,
+         content: tool.result,
+         dimColor: !tool.error,
+         key: `tool-${tool.id}-result`
+       })
+     }
+
+     groups.push({
+       color: t.color.cornsilk,
+       key: tool.id,
+       toolId: tool.id,
+       label,
+       details,
+       content: (
+         <>
+           <Text color={t.color.amber}>{isExpanded ? '▾' : '▸'}</Text>
+           <Text> </Text>
+           <Spinner color={t.color.amber} variant="tool" />
+           <Text> {label}</Text>
+            {tool.duration != null ? (
+              <Text color={t.color.dim}> ({tool.duration}s)</Text>
+            ) : tool.startedAt != null ? (
+              <Text color={t.color.dim}> ({fmtElapsed(now - tool.startedAt)})</Text>
+            ) : null}
+         </>
+       )
+     })
+   }
 
   for (const item of activity.slice(-4)) {
     const glyph = item.tone === 'error' ? '✗' : item.tone === 'warn' ? '!' : '·'
@@ -938,24 +888,39 @@ export const ToolTrail = memo(function ToolTrail({
   // Shift+click on any chevron expands every NON-hidden section at once —
   // hidden sections stay hidden so the override is honoured.
 
-  const expandAll = () => {
-    if (visible.thinking !== 'hidden') {
-      setOpenThinking(true)
-    }
+   const expandAll = () => {
+     if (visible.thinking !== 'hidden') {
+       setOpenThinking(true)
+     }
 
-    if (visible.tools !== 'hidden') {
-      setOpenTools(true)
-    }
+     if (visible.tools !== 'hidden') {
+       setOpenTools(true)
+       // Also expand all individual tool results
+       const allToolIds = tools.map(t => t.id)
+       setExpandedTools(new Set(allToolIds))
+     }
 
-    if (visible.subagents !== 'hidden') {
-      setOpenSubagents(true)
-      setDeepSubagents(true)
-    }
+     if (visible.subagents !== 'hidden') {
+       setOpenSubagents(true)
+       setDeepSubagents(true)
+     }
 
-    if (visible.activity !== 'hidden') {
-      setOpenMeta(true)
-    }
-  }
+     if (visible.activity !== 'hidden') {
+       setOpenMeta(true)
+     }
+   }
+
+   const toggleTool = (toolId: string) => {
+     setExpandedTools(prev => {
+       const next = new Set(prev)
+       if (next.has(toolId)) {
+         next.delete(toolId)
+       } else {
+         next.add(toolId)
+       }
+       return next
+     })
+   }
 
   const metaTone: 'dim' | 'error' | 'warn' = activity.some(i => i.tone === 'error')
     ? 'error'
@@ -963,7 +928,7 @@ export const ToolTrail = memo(function ToolTrail({
       ? 'warn'
       : 'dim'
 
-  const renderSubagentList = (rails: boolean[]) => (
+  const renderSubagentList = (rails: TreeRails) => (
     <Box flexDirection="column">
       {spawnTree.map((node, index) => (
         <SubagentAccordion
@@ -983,7 +948,7 @@ export const ToolTrail = memo(function ToolTrail({
     header: ReactNode
     key: string
     open: boolean
-    render: (rails: boolean[]) => ReactNode
+    render: (rails: TreeRails) => ReactNode
   }[] = []
 
   if (hasThinking && visible.thinking !== 'hidden') {
@@ -1060,31 +1025,77 @@ export const ToolTrail = memo(function ToolTrail({
             const branch: TreeBranch = index === groups.length - 1 ? 'last' : 'mid'
             const childRails = nextTreeRails(rails, branch)
             const hasInlineSubagents = inlineDelegateKey === group.key
+            const isTool = !!group.toolId
+            const isToolExpanded = isTool && expandedTools.has(group.toolId!)
+            const tool = tools.find(t => t.id === group.toolId)!
+            // Tool details only shown when section is open AND this tool is expanded.
+            // Non-tool groups (trail/drafting) always show their details.
+            const showDetails = !isTool || (openTools && isToolExpanded)
 
             return (
               <Box flexDirection="column" key={group.key}>
-                <TreeTextRow
-                  branch={branch}
-                  color={group.color}
-                  content={
-                    <>
-                      <Text color={t.color.amber}>● </Text>
-                      {toolLabel(group)}
-                    </>
-                  }
-                  rails={rails}
-                  t={t}
-                />
-                {group.details.map((detail, detailIndex) => (
-                  <Detail
-                    {...detail}
-                    branch={detailIndex === group.details.length - 1 && !hasInlineSubagents ? 'last' : 'mid'}
-                    key={detail.key}
-                    rails={childRails}
+                {isTool ? (
+                  <ExpandableToolCall
+                    tool={tool}
+                    isExpanded={isToolExpanded}
+                    onToggle={() => toggleTool(group.toolId!)}
                     t={t}
+                    branch={branch}
+                    rails={childRails}
+                    hasInlineSubagents={hasInlineSubagents}
+                    details={[
+                      ...(tool?.context
+                        ? [{ color: t.color.cornsilk, content: tool.context, key: 'ctx' }]
+                        : []),
+                      ...(tool?.result
+                        ? [{ color: t.color.default, content: tool.result, dimColor: true, key: 'res' }]
+                        : []),
+                      ...(tool?.error
+                        ? [{ color: t.color.error, content: tool.error, key: 'err' }]
+                        : []),
+                    ]}
                   />
-                ))}
-                {hasInlineSubagents ? renderSubagentList(childRails) : null}
+                ) : (
+                  <>
+                    <TreeTextRow
+                      branch={branch}
+                      color={group.color}
+                      content={
+                        <Box
+                          onClick={(e: React.MouseEvent) => {
+                            if (e.button === 0) {
+                              if (e.shiftKey || e.ctrlKey || e.metaKey) {
+                                // Shift/ctrl+click on any row expands all tools
+                                e.stopPropagation()
+                                const allIds = tools.map(t => t.id)
+                                setExpandedTools(new Set(allIds))
+                              } else if (isTool) {
+                                // Left-click on tool row toggles just that tool
+                                e.stopPropagation()
+                                toggleTool(group.toolId!)
+                              }
+                            }
+                          }}
+                          style={{ cursor: isTool ? 'pointer' : 'default' }}
+                        >
+                          {group.content}
+                        </Box>
+                      }
+                      rails={rails}
+                      t={t}
+                    />
+                    {showDetails && group.details.map((detail, detailIndex) => (
+                      <Detail
+                        {...detail}
+                        branch={detailIndex === group.details.length - 1 && !hasInlineSubagents ? 'last' : 'mid'}
+                        key={detail.key}
+                        rails={childRails}
+                        t={t}
+                      />
+                    ))}
+                    {showDetails && hasInlineSubagents ? renderSubagentList(childRails) : null}
+                  </>
+                )}
               </Box>
             )
           })}

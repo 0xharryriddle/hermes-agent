@@ -9,6 +9,7 @@ import {
   boundedHistoryRenderText,
   boundedLiveRenderText,
   compactPreview,
+  formatToolCall,
   hasAnsi,
   isPasteBackedText,
   stripAnsi
@@ -68,7 +69,7 @@ export const MessageLine = memo(function MessageLine({
           t={t}
           tools={tools}
           toolTokens={msg.toolTokens}
-          trail={msg.tools ?? []}
+          trail={msg.tools?.map(t => formatToolCall(t.name, t.context || '')) ?? []}
         />
       </Box>
     ) : null
@@ -157,7 +158,8 @@ export const MessageLine = memo(function MessageLine({
             sections={sections}
             t={t}
             toolTokens={msg.toolTokens}
-            trail={msg.tools}
+            tools={msg.tools}
+            trail={[]}
           />
         </Box>
       )}

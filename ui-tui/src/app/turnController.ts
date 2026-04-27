@@ -10,7 +10,6 @@ import { appendToolShelfMessage, isToolShelfMessage } from '../lib/liveProgress.
 import { hasReasoningTag, splitReasoning } from '../lib/reasoning.js'
 import {
   boundedLiveRenderText,
-  buildToolTrailLine,
   estimateTokensRough,
   isTransientTrailLine,
   sameToolTrailGroup,
@@ -116,7 +115,7 @@ class TurnController {
   protocolWarned = false
   reasoningText = ''
   segmentMessages: Msg[] = []
-  pendingSegmentTools: string[] = []
+  pendingSegmentTools: ActiveTool[] = []  // completed tools awaiting segment flush (full data for expansion)
   statusTimer: Timer = null
   toolTokenAcc = 0
   turnTools: string[] = []
@@ -346,7 +345,7 @@ class TurnController {
     return true
   }
 
-  pushInlineDiffSegment(diffText: string, tools: string[] = []) {
+  pushInlineDiffSegment(diffText: string, tools: ActiveTool[] = []) {
     // Strip CLI chrome the gateway emits before the unified diff (e.g. a
     // leading "┊ review diff" header written by `_emit_inline_diff` for the
     // terminal printer). That header only makes sense as stdout dressing,
@@ -362,7 +361,9 @@ class TurnController {
     // whatever the agent streams afterwards — not glued onto the final
     // message. This is the whole point of segment-anchored diffs: the diff
     // renders where the edit actually happened.
-    this.flushStreamingSegment()
+    // Caller (recordInlineDiffToolComplete) already flushed the pending
+    // narration before calling us. We skip another flush here to avoid
+    // emitting a spurious empty segment between narration and the diff.
 
     const block = `\`\`\`diff\n${stripped}\n\`\`\``
 
@@ -568,12 +569,13 @@ class TurnController {
     error?: string,
     summary?: string,
     duration?: number,
-    todos?: unknown
+    todos?: unknown,
+    result?: string
   ) {
     this.recordTodos(todos)
-    const line = this.completeTool(toolId, fallbackName, error, summary, duration)
+    const tool = this.completeTool(toolId, fallbackName, error, summary, duration, result)
 
-    this.pendingSegmentTools = [...this.pendingSegmentTools, line]
+    this.pendingSegmentTools = [...this.pendingSegmentTools, tool]
     this.flushPendingToolsIntoLastSegment()
     this.publishToolState()
   }
@@ -584,25 +586,41 @@ class TurnController {
     fallbackName?: string,
     error?: string,
     duration?: number
+  ,
+    result?: string
   ) {
     this.flushStreamingSegment()
-    this.pushInlineDiffSegment(diffText, [this.completeTool(toolId, fallbackName, error, '', duration)])
+    const completed = this.completeTool(toolId, fallbackName, error, '', duration, result)
+    // Prevent the tool from also appearing in the next trail segment.
+    // It should be attached only to the diff block that follows.
+    this.pendingSegmentTools = []
+    this.pushInlineDiffSegment(diffText, [completed])
     this.publishToolState()
   }
 
-  private completeTool(toolId: string, fallbackName?: string, error?: string, summary?: string, duration?: number) {
+  private completeTool(
+    toolId: string,
+    fallbackName?: string,
+    error?: string,
+    summary?: string,
+    duration?: number,
+    result?: string
+  ): ActiveTool {
     const done = this.activeTools.find(tool => tool.id === toolId)
     const name = done?.name ?? fallbackName ?? 'tool'
     const label = toolTrailLabel(name)
     const fallbackDuration = done?.startedAt ? (Date.now() - done.startedAt) / 1000 : undefined
 
-    const line = buildToolTrailLine(
+    const completedTool: ActiveTool = {
+      id: toolId,
       name,
-      done?.context || '',
-      Boolean(error),
-      error || summary || '',
-      duration ?? fallbackDuration
-    )
+      context: done?.context,
+      startedAt: done?.startedAt,
+      duration: duration ?? fallbackDuration,
+      error,
+      summary,
+      result,
+    }
 
     this.activeTools = this.activeTools.filter(tool => tool.id !== toolId)
 
@@ -614,8 +632,9 @@ class TurnController {
 
     this.turnTools = next.slice(-TRAIL_LIMIT)
 
-    return line
+    return completedTool
   }
+
 
   private publishToolState() {
     patchTurnState({
@@ -625,8 +644,8 @@ class TurnController {
     })
   }
 
-  recordToolProgress(toolName: string, preview: string) {
-    const index = this.activeTools.findIndex(tool => tool.name === toolName)
+  recordToolProgress(toolId: string, preview: string) {
+    const index = this.activeTools.findIndex(tool => tool.id === toolId)
 
     if (index < 0) {
       return
