@@ -906,6 +906,51 @@ The user has requested that this compaction PRIORITISE preserving all informatio
                             _SUMMARY_FAILURE_COOLDOWN_SECONDS)
             return None
         except Exception as e:
+            # Handle JSON decode errors first (non-JSON responses from provider)
+            if isinstance(e, json.JSONDecodeError):
+                logger.error(
+                    "Context compression failed: Auxiliary LLM returned non-JSON response. "
+                    "Provider: %s, Summary Model: %s, Main Model: %s, Base URL: %s. "
+                    "JSON Error: %s (line %s, column %s, char %s). "
+                    "This usually indicates the provider returned invalid content (HTML, plain text, or malformed JSON).",
+                    self.provider,
+                    self.summary_model or "main",
+                    self.model,
+                    self.base_url or "default",
+                    e,
+                    e.lineno,
+                    e.colno,
+                    e.pos,
+                )
+                # Fallback to main model if using a separate summary model
+                if (
+                    self.summary_model
+                    and self.summary_model != self.model
+                    and not getattr(self, "_summary_model_fallen_back", False)
+                ):
+                    self._summary_model_fallen_back = True
+                    logging.warning(
+                        "Falling back to main model '%s' for compression after summary model '%s' returned invalid JSON.",
+                        self.model,
+                        self.summary_model,
+                    )
+                    self._last_aux_model_failure_error = f"Non-JSON response: {e}"
+                    self._last_aux_model_failure_model = self.summary_model
+                    self.summary_model = "" # use main model
+                    self._summary_failure_cooldown_until = 0.0
+                    return self._generate_summary(turns_to_summarize, focus_topic=focus_topic)
+                # If already on main model, use shorter cooldown
+                _transient_cooldown = 30
+                self._summary_failure_cooldown_until = time.monotonic() + _transient_cooldown
+                self._last_summary_error = str(e)
+                logging.warning(
+                    "Failed to generate context summary: %s. "
+                    "Further summary attempts paused for %d seconds.",
+                    e,
+                    _transient_cooldown,
+                )
+                return None
+            # Original error handling for non-JSON decode errors continues below
             # If the summary model is different from the main model and the
             # error looks permanent (model not found, 503, 404), fall back to
             # using the main model instead of entering cooldown that leaves
@@ -942,7 +987,7 @@ The user has requested that this compaction PRIORITISE preserving all informatio
                     _err_text = _err_text[:217].rstrip() + "..."
                 self._last_aux_model_failure_error = _err_text
                 self._last_aux_model_failure_model = self.summary_model
-                self.summary_model = ""  # empty = use main model
+                self.summary_model = "" # empty = use main model
                 self._summary_failure_cooldown_until = 0.0  # no cooldown
                 return self._generate_summary(turns_to_summarize, focus_topic=focus_topic)  # retry immediately
 
@@ -974,7 +1019,7 @@ The user has requested that this compaction PRIORITISE preserving all informatio
                     _err_text = _err_text[:217].rstrip() + "..."
                 self._last_aux_model_failure_error = _err_text
                 self._last_aux_model_failure_model = self.summary_model
-                self.summary_model = ""  # empty = use main model
+                self.summary_model = "" # empty = use main model
                 self._summary_failure_cooldown_until = 0.0
                 return self._generate_summary(turns_to_summarize, focus_topic=focus_topic)
 
