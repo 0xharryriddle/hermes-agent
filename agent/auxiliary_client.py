@@ -1420,8 +1420,21 @@ def _try_nous(vision: bool = False) -> Tuple[Optional[OpenAI], Optional[str]]:
 
     nous = _read_nous_auth()
     runtime = _resolve_nous_runtime_api(force_refresh=False)
+
     if runtime is None and not nous:
+        logger.warning(
+            "Auxiliary Nous client unavailable: no Nous authentication found. "
+            "Please run `/nous login` or check ~/.hermes/auth.json"
+        )
         return None, None
+
+    if runtime is None and nous:
+        logger.warning(
+            "Auxiliary Nous client unavailable: runtime credentials missing. "
+            "Nous authentication may be expired or invalid."
+        )
+        return None, None
+
     global auxiliary_is_nous
     auxiliary_is_nous = True
     logger.debug("Auxiliary client: Nous Portal")

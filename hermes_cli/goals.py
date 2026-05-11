@@ -319,7 +319,25 @@ def judge_goal(
         return "continue", "auxiliary client unavailable", False
 
     if client is None or not model:
-        return "continue", "no auxiliary client configured", False
+        # Try to determine the specific reason for unavailability
+        reason = "no auxiliary client configured"
+        try:
+            from agent.auxiliary_client import _get_auxiliary_task_config
+            task_cfg = _get_auxiliary_task_config("goal_judge")
+            provider = task_cfg.get("provider")
+            if isinstance(provider, str):
+                provider = provider.lower()
+                if provider == "nous":
+                    reason = "Nous provider unavailable - check authentication"
+                elif provider and provider != "auto":
+                    reason = f"{provider} provider unavailable"
+            else:
+                # Provider is not a string (None, empty, or other) - use generic reason
+                pass
+        except Exception:
+            pass  # Fall back to generic reason if we can't determine specifics
+        logger.info("Goal judge: %s", reason)
+        return "continue", reason, False
 
     prompt = JUDGE_USER_PROMPT_TEMPLATE.format(
         goal=_truncate(goal, 2000),
@@ -537,8 +555,9 @@ class GoalManager:
                 "reason": reason,
                 "message": (
                     f"⏸ Goal paused — the judge model ({state.consecutive_parse_failures} turns) "
-                    "isn't returning the required JSON verdict. Route the judge to a stricter "
-                    "model in ~/.hermes/config.yaml:\n"
+                    "isn't returning the required JSON verdict. This could be due to model limitations "
+                    "or authentication issues. Check your goal_judge configuration and ensure the "
+                    "provider is properly authenticated. Try routing to a stricter model like:\n"
                     "  auxiliary:\n"
                     "    goal_judge:\n"
                     "      provider: openrouter\n"
